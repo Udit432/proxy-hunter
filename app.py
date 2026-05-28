@@ -4,7 +4,6 @@ import logging
 import os
 from datetime import datetime
 from flask import Flask, jsonify
-from apscheduler.schedulers.background import BackgroundScheduler
 
 from sources import SOURCES
 from scraper import scrape_all
@@ -17,15 +16,12 @@ logging.basicConfig(
 )
 
 app        = Flask(__name__)
-ALL_ALIVE  = []          # accumulated alive proxies
+ALL_ALIVE  = []
 IS_RUNNING = False
 LAST_RUN   = "Never"
 STATS      = {}
 
-OUTPUT_HTTP   = "alive_http.txt"
-OUTPUT_SOCKS4 = "alive_socks4.txt"
-OUTPUT_SOCKS5 = "alive_socks5.txt"
-OUTPUT_ALL    = "alive_proxies.txt"
+OUTPUT_ALL = "alive_proxies.txt"
 
 def save_proxies(proxies):
     with open(OUTPUT_ALL, "w") as f:
@@ -42,11 +38,9 @@ def run_hunt():
     send_msg("🚀 <b>Proxy Hunt Started!</b>\n⏳ Scraping from 150+ sources...")
 
     try:
-        # Step 1: Scrape
         raw = asyncio.run(scrape_all(SOURCES))
         send_msg(f"📦 <b>Scraped:</b> {len(raw):,} raw proxies\n⚡ Checking alive status (500 concurrent)...")
 
-        # Step 2: Check
         def progress_cb(done, total, alive_count):
             if done % 10000 == 0:
                 pct = (done / total) * 100
@@ -54,7 +48,6 @@ def run_hunt():
 
         alive = asyncio.run(check_proxies(raw, progress_callback=progress_cb))
 
-        # Step 3: Accumulate (deduplicate)
         ALL_ALIVE = list(set(ALL_ALIVE + alive))
         save_proxies(ALL_ALIVE)
 
@@ -77,7 +70,6 @@ def run_hunt():
         )
         send_msg(summary)
 
-        # Telegram pe file bhejo agar 500+ alive hain
         if len(alive) >= 500:
             send_file(OUTPUT_ALL, f"🟢 {len(ALL_ALIVE):,} accumulated alive proxies")
 
@@ -101,7 +93,20 @@ def get_status():
         f"📈 Stats: {STATS}"
     )
 
-# ── Flask Routes ────────────────────────────────────────
+# ── Auto-scheduler using simple threading (NO APScheduler) ──
+def _auto_scheduler():
+    """Har 90 min mein auto run karta hai - APScheduler ki zaroorat nahi"""
+    import time
+    time.sleep(10)  # startup pe 10 sec wait
+    while True:
+        try:
+            run_hunt()
+        except Exception as e:
+            logging.error(f"Scheduler error: {e}")
+        logging.info("⏰ Next hunt in 90 minutes...")
+        time.sleep(90 * 60)  # 90 minutes
+
+# ── Flask Routes ─────────────────────────────────────────
 @app.route("/")
 @app.route("/ping")
 def ping():
@@ -136,13 +141,8 @@ def web_status():
 def web_proxies():
     return "\n".join(ALL_ALIVE), 200, {"Content-Type": "text/plain"}
 
-# ── Scheduler: Har 90 min mein auto-run ─────────────────
-scheduler = BackgroundScheduler()
-scheduler.add_job(run_hunt, "interval", minutes=90, id="proxy_hunt")
-scheduler.start()
-
 if __name__ == "__main__":
-    # Telegram bot alag thread mein
+    # Telegram bot thread
     bot_thread = threading.Thread(
         target=start_bot,
         args=(
@@ -154,9 +154,9 @@ if __name__ == "__main__":
     )
     bot_thread.start()
 
-    # Startup pe turant ek run
-    first_run = threading.Thread(target=run_hunt, daemon=True)
-    first_run.start()
+    # Auto scheduler thread (APScheduler replace)
+    sched_thread = threading.Thread(target=_auto_scheduler, daemon=True)
+    sched_thread.start()
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
