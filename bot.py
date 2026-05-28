@@ -1,73 +1,95 @@
 import os
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
+import requests
+import threading
 
-TOKEN   = os.environ["8612747382:AAGaAPhsNeagH5RD0kZQHAHnH9Tm7c-V39M"]
-CHAT_ID = os.environ["5081251584"]
-
-_job_ref    = None  # scheduler job reference
-_is_running = False
+TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 def send_msg(text):
+    if not TOKEN or not CHAT_ID:
+        logging.warning("Telegram not configured")
+        return
     try:
-        import requests
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
+            json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"},
+            timeout=10
         )
     except Exception as e:
         logging.error(f"Telegram send error: {e}")
 
 def send_file(filepath, caption=""):
+    if not TOKEN or not CHAT_ID:
+        return
     try:
-        import requests
         with open(filepath, "rb") as f:
             requests.post(
                 f"https://api.telegram.org/bot{TOKEN}/sendDocument",
                 data={"chat_id": CHAT_ID, "caption": caption},
-                files={"document": f}
+                files={"document": f},
+                timeout=30
             )
     except Exception as e:
         logging.error(f"Telegram file error: {e}")
 
 def start_bot(start_job_fn, stop_job_fn, status_fn):
-    updater = Updater(TOKEN)
-    dp      = updater.dispatcher
+    """
+    Long-polling bot using raw HTTP — no python-telegram-bot library needed.
+    Supports: /start, /hunt, /stop, /status, /getfile
+    """
+    if not TOKEN:
+        logging.warning("No TELEGRAM_TOKEN set — bot disabled")
+        return
 
-    def cmd_start(update: Update, ctx: CallbackContext):
-        keyboard = [
-            [InlineKeyboardButton("▶️ Start Hunt", callback_data="start"),
-             InlineKeyboardButton("⏹ Stop", callback_data="stop")],
-            [InlineKeyboardButton("📊 Status", callback_data="status"),
-             InlineKeyboardButton("📁 Get File", callback_data="getfile")],
-        ]
-        update.message.reply_text(
-            "🤖 <b>Proxy Hunter Bot</b>\n\nCommands:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
-        )
+    logging.info("🤖 Telegram bot started (raw polling)")
+    offset = 0
 
-    def cb_handler(update: Update, ctx: CallbackContext):
-        q    = update.callback_query
-        data = q.data
-        q.answer()
-        if data == "start":
-            start_job_fn()
-            q.edit_message_text("🚀 Proxy hunt started!")
-        elif data == "stop":
-            stop_job_fn()
-            q.edit_message_text("⏹ Hunt stopped.")
-        elif data == "status":
-            q.edit_message_text(status_fn())
-        elif data == "getfile":
-            if os.path.exists("alive_proxies.txt"):
-                send_file("alive_proxies.txt", "🟢 Latest alive proxies")
-                q.edit_message_text("📁 File sent!")
-            else:
-                q.edit_message_text("❌ No file yet. Run a hunt first.")
+    while True:
+        try:
+            r = requests.get(
+                f"https://api.telegram.org/bot{TOKEN}/getUpdates",
+                params={"offset": offset, "timeout": 30},
+                timeout=35
+            )
+            updates = r.json().get("result", [])
 
-    dp.add_handler(CommandHandler("start", cmd_start))
-    dp.add_handler(CallbackQueryHandler(cb_handler))
-    updater.start_polling()
-    logging.info("Bot started polling...")
+            for update in updates:
+                offset = update["update_id"] + 1
+                msg = update.get("message") or update.get("callback_query", {}).get("message")
+                if not msg:
+                    continue
+
+                chat_id = str(msg["chat"]["id"])
+                text    = msg.get("text", "")
+
+                # Only respond to authorized chat
+                if CHAT_ID and chat_id != str(CHAT_ID):
+                    continue
+
+                if "/start" in text or "/help" in text:
+                    send_msg(
+                        "🤖 <b>Proxy Hunter Bot</b>\n\n"
+                        "/hunt — Start proxy hunt\n"
+                        "/stop — Stop hunt\n"
+                        "/status — Show status\n"
+                        "/getfile — Get alive proxies file"
+                    )
+                elif "/hunt" in text:
+                    threading.Thread(target=start_job_fn, daemon=True).start()
+                    send_msg("🚀 Hunt started!")
+                elif "/stop" in text:
+                    stop_job_fn()
+                    send_msg("⏹ Hunt stopped.")
+                elif "/status" in text:
+                    send_msg(status_fn())
+                elif "/getfile" in text:
+                    if os.path.exists("alive_proxies.txt"):
+                        send_file("alive_proxies.txt", "🟢 Latest alive proxies")
+                    else:
+                        send_msg("❌ No file yet. Run /hunt first.")
+
+        except Exception as e:
+            logging.error(f"Bot polling error: {e}")
+            import time
+            time.sleep(5)
