@@ -1,3 +1,4 @@
+setuptools
 flask>=2.3
 aiohttp>=3.9
 requests>=2.31
