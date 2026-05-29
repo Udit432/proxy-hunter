@@ -15,13 +15,13 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-app        = Flask(__name__)
-ALL_ALIVE  = []
-IS_RUNNING = False
-LAST_RUN   = "Never"
-STATS      = {}
-
-OUTPUT_ALL = "alive_proxies.txt"
+app             = Flask(__name__)
+ALL_ALIVE       = []
+CURRENT_ALIVE   = []   # ← YEH NEW — hunt ke dauran live update hota hai
+IS_RUNNING      = False
+LAST_RUN        = "Never"
+STATS           = {}
+OUTPUT_ALL      = "alive_proxies.txt"
 
 def save_proxies(proxies):
     with open(OUTPUT_ALL, "w") as f:
@@ -29,13 +29,14 @@ def save_proxies(proxies):
     logging.info(f"💾 Saved {len(proxies)} proxies to {OUTPUT_ALL}")
 
 def run_hunt():
-    global ALL_ALIVE, IS_RUNNING, LAST_RUN, STATS
+    global ALL_ALIVE, CURRENT_ALIVE, IS_RUNNING, LAST_RUN, STATS
     if IS_RUNNING:
         logging.info("Hunt already running, skip.")
         return
-    IS_RUNNING = True
-    t0    = datetime.now()
-    alive = []
+    IS_RUNNING    = True
+    CURRENT_ALIVE = []   # reset every run
+    t0            = datetime.now()
+    alive         = []
     send_msg("🚀 <b>Proxy Hunt Started!</b>\n⏳ Scraping from 150+ sources...")
 
     try:
@@ -46,9 +47,11 @@ def run_hunt():
         )
 
         def progress_cb(done, total, alive_count):
+            global CURRENT_ALIVE
             if done % 10000 == 0:
                 pct = (done / total) * 100
-                save_proxies(list(set(ALL_ALIVE + alive)))
+                CURRENT_ALIVE = list(alive)   # ← live update global mein
+                save_proxies(list(set(ALL_ALIVE + CURRENT_ALIVE)))
                 send_msg(
                     f"⏳ Progress: {done:,}/{total:,} ({pct:.0f}%)\n"
                     f"✅ Alive so far: {alive_count:,}"
@@ -56,7 +59,8 @@ def run_hunt():
 
         alive = asyncio.run(check_proxies(raw, progress_callback=progress_cb))
 
-        ALL_ALIVE = list(set(ALL_ALIVE + alive))
+        ALL_ALIVE     = list(set(ALL_ALIVE + alive))
+        CURRENT_ALIVE = []
         save_proxies(ALL_ALIVE)
 
         elapsed  = int((datetime.now() - t0).total_seconds())
@@ -93,10 +97,11 @@ def stop_hunt():
     send_msg("⏹ Hunt stopped by user.")
 
 def get_status():
+    total = len(set(ALL_ALIVE + CURRENT_ALIVE))
     return (
         f"📊 <b>Status</b>\n\n"
         f"🔄 Running: {'Yes' if IS_RUNNING else 'No'}\n"
-        f"✅ Total alive: {len(ALL_ALIVE):,}\n"
+        f"✅ Total alive: {total:,}\n"
         f"🕐 Last run: {LAST_RUN}\n"
         f"📈 Stats: {STATS}"
     )
@@ -117,7 +122,7 @@ def _auto_scheduler():
 def ping():
     return jsonify({
         "status": "alive",
-        "proxies": len(ALL_ALIVE),
+        "proxies": len(set(ALL_ALIVE + CURRENT_ALIVE)),
         "running": IS_RUNNING,
         "last_run": LAST_RUN
     }), 200
@@ -137,18 +142,19 @@ def web_stop():
 def web_status():
     return jsonify({
         "running": IS_RUNNING,
-        "total_alive": len(ALL_ALIVE),
+        "total_alive": len(set(ALL_ALIVE + CURRENT_ALIVE)),
         "last_run": LAST_RUN,
         "stats": STATS
     }), 200
 
 @app.route("/proxies")
 def web_proxies():
-    return "\n".join(ALL_ALIVE), 200, {"Content-Type": "text/plain"}
+    all_p = list(set(ALL_ALIVE + CURRENT_ALIVE))
+    return "\n".join(all_p), 200, {"Content-Type": "text/plain"}
 
 if __name__ == "__main__":
-    # Memory getter register karo — /getfile mid-hunt bhi kaam karega
-    set_alive_getter(lambda: list(ALL_ALIVE))
+    # Getter: ALL_ALIVE + CURRENT_ALIVE dono return karo
+    set_alive_getter(lambda: list(set(ALL_ALIVE + CURRENT_ALIVE)))
 
     bot_thread = threading.Thread(
         target=start_bot,
