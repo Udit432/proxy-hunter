@@ -15,13 +15,13 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-app             = Flask(__name__)
-ALL_ALIVE       = []
-CURRENT_ALIVE   = []   # ← YEH NEW — hunt ke dauran live update hota hai
-IS_RUNNING      = False
-LAST_RUN        = "Never"
-STATS           = {}
-OUTPUT_ALL      = "alive_proxies.txt"
+app           = Flask(__name__)
+ALL_ALIVE     = []
+CURRENT_ALIVE = []   # ← real-time shared list — checker seedha isme likhta hai
+IS_RUNNING    = False
+LAST_RUN      = "Never"
+STATS         = {}
+OUTPUT_ALL    = "alive_proxies.txt"
 
 def save_proxies(proxies):
     with open(OUTPUT_ALL, "w") as f:
@@ -34,9 +34,8 @@ def run_hunt():
         logging.info("Hunt already running, skip.")
         return
     IS_RUNNING    = True
-    CURRENT_ALIVE = []   # reset every run
+    CURRENT_ALIVE = []   # reset — checker isi mein likhega
     t0            = datetime.now()
-    alive         = []
     send_msg("🚀 <b>Proxy Hunt Started!</b>\n⏳ Scraping from 150+ sources...")
 
     try:
@@ -47,17 +46,19 @@ def run_hunt():
         )
 
         def progress_cb(done, total, alive_count):
-            global CURRENT_ALIVE
             if done % 10000 == 0:
                 pct = (done / total) * 100
-                CURRENT_ALIVE = list(alive)   # ← live update global mein
+                # CURRENT_ALIVE ab real-time filled hai — seedha save karo
                 save_proxies(list(set(ALL_ALIVE + CURRENT_ALIVE)))
                 send_msg(
                     f"⏳ Progress: {done:,}/{total:,} ({pct:.0f}%)\n"
                     f"✅ Alive so far: {alive_count:,}"
                 )
 
-        alive = asyncio.run(check_proxies(raw, progress_callback=progress_cb))
+        # ✅ shared_list=CURRENT_ALIVE — checker directly isme append karta hai
+        alive = asyncio.run(
+            check_proxies(raw, progress_callback=progress_cb, shared_list=CURRENT_ALIVE)
+        )
 
         ALL_ALIVE     = list(set(ALL_ALIVE + alive))
         CURRENT_ALIVE = []
@@ -153,7 +154,6 @@ def web_proxies():
     return "\n".join(all_p), 200, {"Content-Type": "text/plain"}
 
 if __name__ == "__main__":
-    # Getter: ALL_ALIVE + CURRENT_ALIVE dono return karo
     set_alive_getter(lambda: list(set(ALL_ALIVE + CURRENT_ALIVE)))
 
     bot_thread = threading.Thread(
