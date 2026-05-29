@@ -3,8 +3,8 @@ import aiohttp
 import logging
 
 CHECK_URL   = "http://httpbin.org/ip"
-TIMEOUT_SEC = 6
-CONCURRENCY = 500
+TIMEOUT_SEC = 7
+CONCURRENCY = 300  # 500 se 300 karo — render pe stable rahega
 
 async def _check(session, proxy, alive):
     try:
@@ -12,19 +12,26 @@ async def _check(session, proxy, alive):
             CHECK_URL,
             proxy=f"http://{proxy}",
             timeout=aiohttp.ClientTimeout(total=TIMEOUT_SEC),
-            allow_redirects=True
+            allow_redirects=False,  # ← redirect nahi follow karo
+            ssl=False
         ) as resp:
             if resp.status == 200:
-                alive.append(proxy)
+                text = await resp.text()
+                # ✅ Sirf tab alive mark karo jab actual IP response aaye
+                if '"origin"' in text or "origin" in text:
+                    alive.append(proxy)
     except:
         pass
 
 async def check_proxies(proxy_list, progress_callback=None, shared_list=None):
-    # ✅ shared_list pass karo toh wahi use hogi — bahar se real-time visible
     alive = shared_list if shared_list is not None else []
 
     sem       = asyncio.Semaphore(CONCURRENCY)
-    connector = aiohttp.TCPConnector(limit=CONCURRENCY, ssl=False, ttl_dns_cache=300)
+    connector = aiohttp.TCPConnector(
+        limit=CONCURRENCY, ssl=False,
+        ttl_dns_cache=300,
+        enable_cleanup_closed=True
+    )
 
     async def _guarded(proxy):
         async with sem:
@@ -39,7 +46,9 @@ async def check_proxies(proxy_list, progress_callback=None, shared_list=None):
             await asyncio.gather(*[_guarded(p) for p in chunk])
             checked += len(chunk)
             pct = (checked / total) * 100
-            logging.info(f"Progress: {checked}/{total} ({pct:.1f}%) | Alive: {len(alive)}")
+            logging.info(
+                f"Progress: {checked}/{total} ({pct:.1f}%) | Alive: {len(alive)}"
+            )
             if progress_callback:
                 progress_callback(checked, total, len(alive))
 
