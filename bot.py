@@ -7,7 +7,6 @@ import io
 TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# ← YEH ADD KRO — memory se proxies access karne ke liye
 _get_alive_fn = None
 
 def set_alive_getter(fn):
@@ -36,29 +35,25 @@ def send_file(filepath, caption=""):
                 f"https://api.telegram.org/bot{TOKEN}/sendDocument",
                 data={"chat_id": CHAT_ID, "caption": caption},
                 files={"document": f},
-                timeout=30
+                timeout=60
             )
     except Exception as e:
         logging.error(f"Telegram file error: {e}")
 
-def send_proxies_from_memory(proxies, label="proxies"):
+def _send_from_memory(proxies):
     """Disk file ki zaroorat nahi — memory se seedha bhejo"""
     if not TOKEN or not CHAT_ID:
         return
-    if not proxies:
-        send_msg("❌ Abhi koi alive proxy nahi mili. Hunt chal rahi hai...")
-        return
     try:
         content = "\n".join(proxies).encode("utf-8")
-        f = io.BytesIO(content)
-        f.name = "alive_proxies.txt"
+        buf = io.BytesIO(content)
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendDocument",
             data={
                 "chat_id": CHAT_ID,
-                "caption": f"🟢 {len(proxies):,} alive proxies ({label})"
+                "caption": f"🟢 {len(proxies):,} alive proxies (live snapshot)"
             },
-            files={"document": ("alive_proxies.txt", f)},
+            files={"document": ("alive_proxies.txt", buf)},
             timeout=60
         )
         logging.info(f"Sent {len(proxies)} proxies from memory")
@@ -67,9 +62,9 @@ def send_proxies_from_memory(proxies, label="proxies"):
 
 def start_bot(start_job_fn, stop_job_fn, status_fn):
     if not TOKEN:
-        logging.warning("No TELEGRAM_TOKEN set — bot disabled")
+        logging.warning("No TELEGRAM_TOKEN — bot disabled")
         return
-    logging.info("🤖 Telegram bot started (raw polling)")
+    logging.info("🤖 Telegram bot started")
     offset = 0
     while True:
         try:
@@ -106,11 +101,14 @@ def start_bot(start_job_fn, stop_job_fn, status_fn):
                 elif "/status" in text:
                     send_msg(status_fn())
                 elif "/getfile" in text:
-                    # ✅ Memory se seedha bhejo — file ka wait nahi
                     proxies = _get_alive_fn() if _get_alive_fn else []
                     if proxies:
-                        send_msg(f"📤 Sending {len(proxies):,} proxies...")
-                        send_proxies_from_memory(proxies, "mid-hunt snapshot")
+                        send_msg(f"📤 Sending {len(proxies):,} proxies... wait karo")
+                        threading.Thread(
+                            target=_send_from_memory,
+                            args=(proxies,),
+                            daemon=True
+                        ).start()
                     else:
                         send_msg("❌ Abhi koi proxy nahi. /hunt karo pehle.")
 
