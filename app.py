@@ -34,17 +34,26 @@ def run_hunt():
         logging.info("Hunt already running, skip.")
         return
     IS_RUNNING = True
-    t0 = datetime.now()
+    t0    = datetime.now()
+    alive = []  # pehle declare karo taaki progress_cb access kar sake
     send_msg("🚀 <b>Proxy Hunt Started!</b>\n⏳ Scraping from 150+ sources...")
 
     try:
         raw = asyncio.run(scrape_all(SOURCES))
-        send_msg(f"📦 <b>Scraped:</b> {len(raw):,} raw proxies\n⚡ Checking alive status (500 concurrent)...")
+        send_msg(
+            f"📦 <b>Scraped:</b> {len(raw):,} raw proxies\n"
+            f"⚡ Checking alive status (500 concurrent)..."
+        )
 
         def progress_cb(done, total, alive_count):
             if done % 10000 == 0:
                 pct = (done / total) * 100
-                send_msg(f"⏳ Progress: {done:,}/{total:,} ({pct:.0f}%)\n✅ Alive so far: {alive_count:,}")
+                # ✅ Mid-hunt save — /getfile ab kisi bhi waqt kaam karega
+                save_proxies(list(set(ALL_ALIVE + alive)))
+                send_msg(
+                    f"⏳ Progress: {done:,}/{total:,} ({pct:.0f}%)\n"
+                    f"✅ Alive so far: {alive_count:,}"
+                )
 
         alive = asyncio.run(check_proxies(raw, progress_callback=progress_cb))
 
@@ -93,18 +102,16 @@ def get_status():
         f"📈 Stats: {STATS}"
     )
 
-# ── Auto-scheduler using simple threading (NO APScheduler) ──
 def _auto_scheduler():
-    """Har 90 min mein auto run karta hai - APScheduler ki zaroorat nahi"""
     import time
-    time.sleep(10)  # startup pe 10 sec wait
+    time.sleep(10)
     while True:
         try:
             run_hunt()
         except Exception as e:
             logging.error(f"Scheduler error: {e}")
         logging.info("⏰ Next hunt in 90 minutes...")
-        time.sleep(90 * 60)  # 90 minutes
+        time.sleep(90 * 60)
 
 # ── Flask Routes ─────────────────────────────────────────
 @app.route("/")
@@ -142,7 +149,6 @@ def web_proxies():
     return "\n".join(ALL_ALIVE), 200, {"Content-Type": "text/plain"}
 
 if __name__ == "__main__":
-    # Telegram bot thread
     bot_thread = threading.Thread(
         target=start_bot,
         args=(
@@ -154,7 +160,6 @@ if __name__ == "__main__":
     )
     bot_thread.start()
 
-    # Auto scheduler thread (APScheduler replace)
     sched_thread = threading.Thread(target=_auto_scheduler, daemon=True)
     sched_thread.start()
 
