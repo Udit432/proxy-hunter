@@ -8,7 +8,7 @@ from flask import Flask, jsonify
 from sources import SOURCES
 from scraper import scrape_all
 from checker import check_proxies
-from bot     import send_msg, send_file, start_bot
+from bot     import send_msg, send_file, start_bot, set_alive_getter
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,7 +35,7 @@ def run_hunt():
         return
     IS_RUNNING = True
     t0    = datetime.now()
-    alive = []  # pehle declare karo taaki progress_cb access kar sake
+    alive = []
     send_msg("🚀 <b>Proxy Hunt Started!</b>\n⏳ Scraping from 150+ sources...")
 
     try:
@@ -48,7 +48,6 @@ def run_hunt():
         def progress_cb(done, total, alive_count):
             if done % 10000 == 0:
                 pct = (done / total) * 100
-                # ✅ Mid-hunt save — /getfile ab kisi bhi waqt kaam karega
                 save_proxies(list(set(ALL_ALIVE + alive)))
                 send_msg(
                     f"⏳ Progress: {done:,}/{total:,} ({pct:.0f}%)\n"
@@ -113,7 +112,6 @@ def _auto_scheduler():
         logging.info("⏰ Next hunt in 90 minutes...")
         time.sleep(90 * 60)
 
-# ── Flask Routes ─────────────────────────────────────────
 @app.route("/")
 @app.route("/ping")
 def ping():
@@ -149,6 +147,9 @@ def web_proxies():
     return "\n".join(ALL_ALIVE), 200, {"Content-Type": "text/plain"}
 
 if __name__ == "__main__":
+    # Memory getter register karo — /getfile mid-hunt bhi kaam karega
+    set_alive_getter(lambda: list(ALL_ALIVE))
+
     bot_thread = threading.Thread(
         target=start_bot,
         args=(
