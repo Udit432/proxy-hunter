@@ -3,8 +3,8 @@ import logging
 import requests
 import threading
 
-TOKEN   = os.environ.get("8612747382:AAGaAPhsNeagH5RD0kZQHAHnH9Tm7c-V39M", "")
-CHAT_ID = os.environ.get("5081251584", "")
+TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 def send_msg(text):
     if not TOKEN or not CHAT_ID:
