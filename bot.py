@@ -2,9 +2,17 @@ import os
 import logging
 import requests
 import threading
+import io
 
 TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+# ← YEH ADD KRO — memory se proxies access karne ke liye
+_get_alive_fn = None
+
+def set_alive_getter(fn):
+    global _get_alive_fn
+    _get_alive_fn = fn
 
 def send_msg(text):
     if not TOKEN or not CHAT_ID:
@@ -33,18 +41,36 @@ def send_file(filepath, caption=""):
     except Exception as e:
         logging.error(f"Telegram file error: {e}")
 
+def send_proxies_from_memory(proxies, label="proxies"):
+    """Disk file ki zaroorat nahi — memory se seedha bhejo"""
+    if not TOKEN or not CHAT_ID:
+        return
+    if not proxies:
+        send_msg("❌ Abhi koi alive proxy nahi mili. Hunt chal rahi hai...")
+        return
+    try:
+        content = "\n".join(proxies).encode("utf-8")
+        f = io.BytesIO(content)
+        f.name = "alive_proxies.txt"
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendDocument",
+            data={
+                "chat_id": CHAT_ID,
+                "caption": f"🟢 {len(proxies):,} alive proxies ({label})"
+            },
+            files={"document": ("alive_proxies.txt", f)},
+            timeout=60
+        )
+        logging.info(f"Sent {len(proxies)} proxies from memory")
+    except Exception as e:
+        logging.error(f"Memory send error: {e}")
+
 def start_bot(start_job_fn, stop_job_fn, status_fn):
-    """
-    Long-polling bot using raw HTTP — no python-telegram-bot library needed.
-    Supports: /start, /hunt, /stop, /status, /getfile
-    """
     if not TOKEN:
         logging.warning("No TELEGRAM_TOKEN set — bot disabled")
         return
-
     logging.info("🤖 Telegram bot started (raw polling)")
     offset = 0
-
     while True:
         try:
             r = requests.get(
@@ -53,17 +79,13 @@ def start_bot(start_job_fn, stop_job_fn, status_fn):
                 timeout=35
             )
             updates = r.json().get("result", [])
-
             for update in updates:
                 offset = update["update_id"] + 1
                 msg = update.get("message") or update.get("callback_query", {}).get("message")
                 if not msg:
                     continue
-
                 chat_id = str(msg["chat"]["id"])
                 text    = msg.get("text", "")
-
-                # Only respond to authorized chat
                 if CHAT_ID and chat_id != str(CHAT_ID):
                     continue
 
@@ -84,10 +106,13 @@ def start_bot(start_job_fn, stop_job_fn, status_fn):
                 elif "/status" in text:
                     send_msg(status_fn())
                 elif "/getfile" in text:
-                    if os.path.exists("alive_proxies.txt"):
-                        send_file("alive_proxies.txt", "🟢 Latest alive proxies")
+                    # ✅ Memory se seedha bhejo — file ka wait nahi
+                    proxies = _get_alive_fn() if _get_alive_fn else []
+                    if proxies:
+                        send_msg(f"📤 Sending {len(proxies):,} proxies...")
+                        send_proxies_from_memory(proxies, "mid-hunt snapshot")
                     else:
-                        send_msg("❌ No file yet. Run /hunt first.")
+                        send_msg("❌ Abhi koi proxy nahi. /hunt karo pehle.")
 
         except Exception as e:
             logging.error(f"Bot polling error: {e}")
