@@ -2,35 +2,28 @@ import asyncio
 import aiohttp
 import logging
 
-CHECK_URLS  = [
-    "http://www.google.com",
-    "http://www.bing.com", 
-    "http://example.com",
-]
-TIMEOUT_SEC = 10
-CONCURRENCY = 300
+CHECK_URL   = "http://httpbin.org/ip"
+TIMEOUT_SEC = 6
+CONCURRENCY = 500
 
 async def _check(session, proxy, alive):
-    for url in CHECK_URLS:
-        try:
-            async with session.get(
-                url,
-                proxy=f"http://{proxy}",
-                timeout=aiohttp.ClientTimeout(total=TIMEOUT_SEC),
-                allow_redirects=True,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                }
-            ) as resp:
-                if resp.status in [200, 301, 302]:
-                    alive.append(proxy)
-                    return
-        except:
-            continue
+    try:
+        async with session.get(
+            CHECK_URL,
+            proxy=f"http://{proxy}",
+            timeout=aiohttp.ClientTimeout(total=TIMEOUT_SEC),
+            allow_redirects=True
+        ) as resp:
+            if resp.status == 200:
+                alive.append(proxy)
+    except:
+        pass
 
-async def check_proxies(proxy_list, progress_callback=None):
-    alive = []
-    sem   = asyncio.Semaphore(CONCURRENCY)
+async def check_proxies(proxy_list, progress_callback=None, shared_list=None):
+    # ✅ shared_list pass karo toh wahi use hogi — bahar se real-time visible
+    alive = shared_list if shared_list is not None else []
+
+    sem       = asyncio.Semaphore(CONCURRENCY)
     connector = aiohttp.TCPConnector(limit=CONCURRENCY, ssl=False, ttl_dns_cache=300)
 
     async def _guarded(proxy):
